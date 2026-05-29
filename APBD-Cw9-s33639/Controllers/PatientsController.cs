@@ -1,5 +1,6 @@
 ﻿using APBD_Cw9_s33639.Data;
 using APBD_Cw9_s33639.DTOs;
+using APBD_Cw9_s33639.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -85,4 +86,90 @@ public class PatientsController : ControllerBase
 
         return Ok(patients);
     }
+    
+    [HttpPost("{pesel}/bedassignments")]
+public async Task<IActionResult> CreateBedAssignment(
+    string pesel,
+    [FromBody] CreateBedAssignmentRequest request)
+{
+    if (request.To.HasValue && request.To <= request.From)
+    {
+        return BadRequest(new
+        {
+            message = "Data zakończenia przypisania łóżka musi być późniejsza niż data rozpoczęcia."
+        });
+    }
+
+    var patientExists = await _context.Patients.AnyAsync(p => p.Pesel == pesel);
+
+    if (!patientExists)
+    {
+        return NotFound(new
+        {
+            message = $"Nie znaleziono pacjenta o numerze PESEL {pesel}."
+        });
+    }
+
+    var bedTypeExists = await _context.BedTypes.AnyAsync(bt => bt.Name == request.BedType);
+
+    if (!bedTypeExists)
+    {
+        return NotFound(new
+        {
+            message = $"Nie znaleziono typu łóżka: {request.BedType}."
+        });
+    }
+
+    var wardExists = await _context.Wards.AnyAsync(w => w.Name == request.Ward);
+
+    if (!wardExists)
+    {
+        return NotFound(new
+        {
+            message = $"Nie znaleziono oddziału: {request.Ward}."
+        });
+    }
+
+    var requestedTo = request.To ?? DateTime.MaxValue;
+
+    var bed = await _context.Beds
+        .Include(b => b.BedType)
+        .Include(b => b.Room)
+            .ThenInclude(r => r.Ward)
+        .Where(b =>
+            b.BedType.Name == request.BedType &&
+            b.Room.Ward.Name == request.Ward)
+        .Where(b => !b.BedAssignments.Any(ba =>
+            ba.From < requestedTo &&
+            (ba.To ?? DateTime.MaxValue) > request.From))
+        .FirstOrDefaultAsync();
+
+    if (bed is null)
+    {
+        return NotFound(new
+        {
+            message = "Nie znaleziono wolnego łóżka spełniającego podane kryteria w wybranym okresie."
+        });
+    }
+
+    var assignment = new BedAssignment
+    {
+        PatientPesel = pesel,
+        BedId = bed.Id,
+        From = request.From,
+        To = request.To
+    };
+
+    _context.BedAssignments.Add(assignment);
+    await _context.SaveChangesAsync();
+
+    return Created($"/api/patients/{pesel}/bedassignments/{assignment.Id}", new
+    {
+        id = assignment.Id,
+        patientPesel = assignment.PatientPesel,
+        bedId = assignment.BedId,
+        from = assignment.From,
+        to = assignment.To
+    });
+}
 }
