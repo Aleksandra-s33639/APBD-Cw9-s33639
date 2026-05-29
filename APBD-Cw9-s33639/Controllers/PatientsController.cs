@@ -132,17 +132,27 @@ public async Task<IActionResult> CreateBedAssignment(
 
     var requestedTo = request.To ?? DateTime.MaxValue;
 
-    var bed = await _context.Beds
+    var bedQuery = _context.Beds
         .Include(b => b.BedType)
         .Include(b => b.Room)
-            .ThenInclude(r => r.Ward)
+        .ThenInclude(r => r.Ward)
         .Where(b =>
             b.BedType.Name == request.BedType &&
-            b.Room.Ward.Name == request.Ward)
-        .Where(b => !b.BedAssignments.Any(ba =>
-            ba.From < requestedTo &&
-            (ba.To ?? DateTime.MaxValue) > request.From))
-        .FirstOrDefaultAsync();
+            b.Room.Ward.Name == request.Ward);
+
+    if (request.To.HasValue)
+    {
+        bedQuery = bedQuery.Where(b => !b.BedAssignments.Any(ba =>
+            ba.From < request.To.Value &&
+            (ba.To == null || ba.To > request.From)));
+    }
+    else
+    {
+        bedQuery = bedQuery.Where(b => !b.BedAssignments.Any(ba =>
+            ba.To == null || ba.To > request.From));
+    }
+
+    var bed = await bedQuery.FirstOrDefaultAsync();
 
     if (bed is null)
     {
